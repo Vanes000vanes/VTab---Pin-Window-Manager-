@@ -1,0 +1,271 @@
+; VTab - Pin Window Manager v1.0
+; CTRL + SPACE: Pin/unpin window
+; CTRL + ALT + P: Open manager menu
+; Tác Giả : Zefwang 
+
+#NoEnv
+#Persistent
+#SingleInstance Force
+SetBatchLines, -1
+
+; Support Unicode
+FileEncoding, UTF-8
+
+; --- CẤU HÌNH NGƯỜI DÙNG ---
+global AuthorURL := "https://guns.lol/ze.f" ; 
+; ---------------------------
+
+; Biến toàn cục
+global PinnedWindows := {}
+global DarkMode := true
+global GuiVisible := false
+
+; Màu sắc
+global DarkBG := "0x1E1E1E"
+global DarkText := "0xE0E0E0"
+global DarkAccent := "0x2D2D2D"
+global DarkHover := "0x3A3A3A"
+global LinkColor := "0x0066CC" ; 
+
+global LightBG := "0xF5F5F5"
+global LightText := "0x2C2C2C"
+global LightAccent := "0xFFFFFF"
+global LightHover := "0xE8E8E8"
+
+; Load settings
+LoadSettings()
+
+; Main hotkey - Pin/unpin window
+^SPACE::
+    WinGet, currentWin, ID, A
+    WinGetTitle, winTitle, ahk_id %currentWin%
+    
+    if (winTitle = "")
+        return
+    
+    WinGet, ExStyle, ExStyle, ahk_id %currentWin%
+    
+    If (ExStyle & 0x8) {
+        ; Unpin
+        WinSet, AlwaysOnTop, Off, ahk_id %currentWin%
+        if (PinnedWindows.HasKey(currentWin)) {
+            PinnedWindows.Delete(currentWin)
+        }
+        TrayTip, Pin Window, Unpinned window!, 2
+    } Else {
+        ; Pin
+        WinSet, AlwaysOnTop, On, ahk_id %currentWin%
+        PinnedWindows[currentWin] := {title: winTitle, time: A_TickCount}
+        TrayTip, Pin Window, Pinned window!, 2
+    }
+    
+    if (GuiVisible)
+        UpdateWindowList()
+return
+
+; Hotkey to open manager
+^!p::
+    ShowManagerGui()
+return
+
+; Show GUI function
+ShowManagerGui() {
+    global
+    
+    if (GuiVisible) {
+        Gui, Destroy
+        GuiVisible := false
+        return
+    }
+    
+    ; Colors based on theme
+    BGColor := DarkMode ? DarkBG : LightBG
+    TextColor := DarkMode ? DarkText : LightText
+    
+    Gui, +AlwaysOnTop -Caption +Border +HWNDGuiHwnd
+    Gui, Color, %BGColor%
+    Gui, Font, s10 c%TextColor%, Arial
+    
+    ; Header
+    Gui, Add, Text, x20 y15 w460 h30 +Center, Pin Window Manager
+    Gui, Font, s9
+    
+    ; List of pinned windows
+    Gui, Add, Text, x20 y55 w460, Pinned windows:
+    ; Cột cuối cùng là Action (Unpin)
+    Gui, Add, ListView, x20 y80 w460 h250 +Grid +HWNDListViewHwnd vWindowListView gListViewClick, Window Title|Time Pinned|Action
+    
+    ; Setup ListView colors
+    if (DarkMode) {
+        DllCall("UxTheme\SetWindowTheme", "Ptr", ListViewHwnd, "Str", "DarkMode_Explorer", "Ptr", 0)
+    }
+    
+    ; Buttons
+    Gui, Add, Button, x20 y345 w140 h35 gUnpinAll, Unpin All
+    Gui, Add, Button, x170 y345 w140 h35 gRefreshList, Refresh
+    Gui, Add, Button, x320 y345 w80 h35 gToggleTheme, Theme
+    Gui, Add, Button, x410 y345 w70 h35 gCloseGui, Close
+    
+    ; Footer
+    Gui, Font, s8 c808080
+    Gui, Add, Text, x20 y390 w350, CTRL+SPACE: Pin/Unpin | CTRL+ALT+P: Menu
+    
+    ; --- LINK MORE ---
+    Gui, Font, s9 c%LinkColor% underline
+    Gui, Add, Text, x380 y390 w100 +Right gAuthorLink, More
+    Gui, Font, norm
+    ; -----------------
+    
+    UpdateWindowList()
+    
+    ; Show GUI
+    Gui, Show, w500 h420, Pin Window Manager
+    GuiVisible := true
+    
+    ; Allow window dragging
+    OnMessage(0x201, "WM_LBUTTONDOWN")
+}
+
+; Update window list
+UpdateWindowList() {
+    global PinnedWindows
+    
+    GuiControl, -Redraw, WindowListView
+    LV_Delete()
+    
+    if (PinnedWindows.Count() = 0) {
+        LV_Add("", "No pinned windows", "", "")
+        LV_ModifyCol(1, 460)
+        LV_ModifyCol(2, 0)
+        LV_ModifyCol(3, 0)
+    } else {
+        for hwnd, info in PinnedWindows {
+            ; Check if window still exists
+            WinGet, exists, ID, ahk_id %hwnd%
+            if (!exists) {
+                PinnedWindows.Delete(hwnd)
+                continue
+            }
+            
+            ; Calculate pinned time
+            elapsed := A_TickCount - info.time
+            timeStr := FormatTime(elapsed)
+            
+            ; Shorten window title if too long
+            title := info.title
+            if (StrLen(title) > 40)
+                title := SubStr(title, 1, 37) . "..."
+            
+            LV_Add("", title, timeStr, "Unpin") ; Cột Action
+        }
+        
+        LV_ModifyCol(1, 280)
+        LV_ModifyCol(2, 120)
+        LV_ModifyCol(3, 60)
+    }
+    
+    GuiControl, +Redraw, WindowListView
+}
+
+; Format thời gian
+FormatTime(ms) {
+    seconds := Floor(ms / 1000)
+    minutes := Floor(seconds / 60)
+    hours := Floor(minutes / 60)
+    days := Floor(hours / 24)
+    
+    if (days > 0)
+        return days . " days"
+    if (hours > 0)
+        return hours . " hours"
+    if (minutes > 0)
+        return minutes . " mins"
+    return seconds . " secs"
+}
+
+; Click on ListView
+ListViewClick:
+    if (A_GuiEvent = "DoubleClick") {
+        row := LV_GetNext(0)
+        if (row > 0) {
+            ; Focus on window
+            index := 0
+            for hwnd, info in PinnedWindows {
+                index++
+                if (index = row) {
+                    WinActivate, ahk_id %hwnd%
+                    break
+                }
+            }
+        }
+    }
+return
+
+; ---  LINK MORE ---
+AuthorLink:
+    Run, %AuthorURL%
+return
+; --------------------------------
+
+; Unpin all
+UnpinAll:
+    MsgBox, 4, Confirm, Are you sure you want to unpin all windows?
+    IfMsgBox Yes
+    {
+        for hwnd, info in PinnedWindows {
+            WinSet, AlwaysOnTop, Off, ahk_id %hwnd%
+        }
+        PinnedWindows := {}
+        UpdateWindowList()
+        TrayTip, Pin Window, Unpinned all windows!, 2
+    }
+return
+
+; Refresh list
+RefreshList:
+    UpdateWindowList()
+    TrayTip, Pin Window, Refreshed!, 1
+return
+
+; Toggle theme
+ToggleTheme:
+    DarkMode := !DarkMode
+    SaveSettings()
+    Gui, Destroy
+    GuiVisible := false
+    ShowManagerGui()
+return
+
+; Close GUI
+CloseGui:
+GuiClose:
+GuiEscape:
+    Gui, Destroy
+    GuiVisible := false
+return
+
+; Allow window dragging
+WM_LBUTTONDOWN() {
+    PostMessage, 0xA1, 2
+}
+
+; Save settings
+SaveSettings() {
+    global DarkMode
+    IniWrite, %DarkMode%, %A_ScriptDir%\PinWindowSettings.ini, Settings, DarkMode
+}
+
+; Load settings
+LoadSettings() {
+    global DarkMode
+    IniRead, DarkMode, %A_ScriptDir%\PinWindowSettings.ini, Settings, DarkMode, 1
+}
+
+; Timer to update time
+SetTimer, UpdateTimer, 1000
+return
+
+UpdateTimer:
+    if (GuiVisible)
+        UpdateWindowList()
+return
